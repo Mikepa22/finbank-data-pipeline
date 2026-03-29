@@ -1,0 +1,290 @@
+# =============================================================================
+# CONFIGURACIÓN CENTRAL DEL PIPELINE - FinBank S.A.
+# Escenario A: Banca y Servicios Financieros
+# Plataforma: Microsoft Azure (Databricks + ADLS Gen2 + Delta Lake)
+# =============================================================================
+
+project:
+  name: "finbank-data-pipeline"
+  scenario: "A - Banca y Servicios Financieros"
+  cloud_platform: "Microsoft Azure"
+  author: "Miguel Ángel"
+  version: "1.0.0"
+
+# ---------------------------------------------------------------------------
+# FASE 1: Generación de datos sintéticos
+# ---------------------------------------------------------------------------
+data_generation:
+  seed: 42
+  date_range:
+    start: "2024-01-01"
+    end: "2025-03-28"
+  countries:
+    - code: "CO"
+      name: "Colombia"
+      cities: ["Bogotá", "Medellín", "Cali", "Barranquilla", "Cartagena", "Bucaramanga"]
+      deptos: ["Cundinamarca", "Antioquia", "Valle del Cauca", "Atlántico", "Bolívar", "Santander"]
+      currency: "COP"
+      min_wage: 1300000
+    - code: "MX"
+      name: "Mexico"
+      cities: ["Ciudad de México", "Guadalajara", "Monterrey", "Puebla"]
+      deptos: ["CDMX", "Jalisco", "Nuevo León", "Puebla"]
+      currency: "MXN"
+      min_wage: 7468
+    - code: "PE"
+      name: "Peru"
+      cities: ["Lima", "Arequipa", "Trujillo"]
+      deptos: ["Lima", "Arequipa", "La Libertad"]
+      currency: "PEN"
+      min_wage: 1025
+    - code: "CL"
+      name: "Chile"
+      cities: ["Santiago", "Valparaíso", "Concepción"]
+      deptos: ["Metropolitana", "Valparaíso", "Biobío"]
+      currency: "CLP"
+      min_wage: 460000
+    - code: "AR"
+      name: "Argentina"
+      cities: ["Buenos Aires", "Córdoba", "Rosario"]
+      deptos: ["Buenos Aires", "Córdoba", "Santa Fe"]
+      currency: "ARS"
+      min_wage: 234315
+
+  volumes:
+    TB_CLIENTES_CORE: 10000
+    TB_PRODUCTOS_CAT: 50
+    TB_MOV_FINANCIEROS: 500000
+    TB_OBLIGACIONES: 30000
+    TB_SUCURSALES_RED: 200
+    TB_COMISIONES_LOG: 80000
+
+  null_percentage: 0.05
+  anomaly_count: 3  # Mínimo 3 patrones anómalos documentados
+
+  output_formats:
+    - "csv"
+    - "parquet"
+
+  anomalies:
+    - type: "duplicate_transactions"
+      description: "500 transacciones duplicadas exactas en TB_MOV_FINANCIEROS"
+      count: 500
+    - type: "future_dates"
+      description: "200 registros con fec_mov en el futuro (2026+) en TB_MOV_FINANCIEROS"
+      count: 200
+    - type: "inconsistent_records"
+      description: "150 obligaciones con dias_mora_act negativo y 100 con sdo_capital > vr_aprobado"
+      count: 250
+
+# ---------------------------------------------------------------------------
+# FASE 2: Infraestructura (Azure)
+# ---------------------------------------------------------------------------
+infrastructure:
+  azure:
+    region: "eastus2"
+    resource_group_name: "rg-finbank-pipeline"
+    environment: "dev"  # dev | prod
+    tags:
+      project: "finbank-pipeline"
+      owner: "data-engineering"
+      environment: "dev"
+
+    storage:
+      account_name: "stfinbankdatalake"
+      containers:
+        - "bronze"
+        - "silver"
+        - "gold"
+        - "landing"
+        - "errors"
+        - "logs"
+      sku: "Standard_LRS"
+      is_hns_enabled: true  # ADLS Gen2
+
+    databricks:
+      workspace_name: "dbw-finbank-pipeline"
+      sku: "standard"
+      cluster:
+        name: "finbank-etl-cluster"
+        spark_version: "14.3.x-scala2.12"
+        node_type: "Standard_DS3_v2"
+        autoscale_min: 1
+        autoscale_max: 4
+        auto_termination_minutes: 30
+
+    key_vault:
+      name: "kv-finbank-secrets"
+      sku: "standard"
+
+    data_factory:
+      name: "adf-finbank-pipeline"
+
+    log_analytics:
+      workspace_name: "log-finbank-pipeline"
+      retention_days: 30
+
+    sql_database:
+      server_name: "sql-finbank-source"
+      database_name: "finbank_transactional"
+      sku: "Basic"
+      admin_login: "finbank_admin"
+      # Password stored in Key Vault - NEVER in code
+
+# ---------------------------------------------------------------------------
+# FASE 3: Pipeline Medallion
+# ---------------------------------------------------------------------------
+pipeline:
+  bronze:
+    format: "delta"
+    partition_by: ["ingestion_year", "ingestion_month", "ingestion_day"]
+    metadata_columns:
+      - "_ingestion_timestamp"
+      - "_source_system"
+      - "_batch_id"
+
+  silver:
+    format: "delta"
+    pii_columns:
+      TB_CLIENTES_CORE: ["nomb_cli", "apell_cli", "num_doc"]
+      TB_MOV_FINANCIEROS: ["id_dispositivo"]
+      TB_OBLIGACIONES: ["sdo_capital", "vr_desembolsado"]
+    masking_strategy: "sha256_hash"
+    null_handling:
+      default: "flag"  # flag | impute | exclude
+      overrides:
+        score_buro: "impute_median"
+        canal_adquis: "impute_mode"
+
+  gold:
+    format: "delta"
+    partition_dimensions:
+      fact_transacciones: ["fec_mov_year", "fec_mov_month"]
+      fact_cartera: ["calif_riesgo", "bucket_mora"]
+      fact_rentabilidad_cliente: ["periodo_year", "periodo_month"]
+
+  quality:
+    min_conformity_rate: 0.95
+    checks:
+      - name: "row_count_not_zero"
+        type: "volume"
+      - name: "no_null_primary_keys"
+        type: "completeness"
+      - name: "referential_integrity"
+        type: "consistency"
+      - name: "valid_date_ranges"
+        type: "validity"
+      - name: "no_exact_duplicates"
+        type: "uniqueness"
+
+# ---------------------------------------------------------------------------
+# FASE 3: Reglas de negocio (Escenario A)
+# ---------------------------------------------------------------------------
+business_rules:
+  fx_rates:
+    COP_USD: 0.000245  # Tasa referencial COP -> USD
+    MXN_USD: 0.058
+    PEN_USD: 0.267
+    CLP_USD: 0.00106
+    ARS_USD: 0.00114
+
+  mora_buckets:
+    - name: "Al día"
+      min_days: 0
+      max_days: 0
+    - name: "Rango 1"
+      min_days: 1
+      max_days: 30
+    - name: "Rango 2"
+      min_days: 31
+      max_days: 60
+    - name: "Rango 3"
+      min_days: 61
+      max_days: 90
+    - name: "Deteriorado"
+      min_days: 91
+      max_days: 99999
+
+  regulatory_classification:
+    - rating: "A"
+      mora_range: [0, 0]
+      provision_pct: 0.01
+    - rating: "B"
+      mora_range: [1, 30]
+      provision_pct: 0.032
+    - rating: "C"
+      mora_range: [31, 60]
+      provision_pct: 0.117
+    - rating: "D"
+      mora_range: [61, 90]
+      provision_pct: 0.50
+    - rating: "E"
+      mora_range: [91, 99999]
+      provision_pct: 1.00
+
+  suspicious_transaction:
+    std_dev_threshold: 3
+    rolling_window_days: 30
+
+  cltv:
+    lookback_months: 12
+
+  business_hours:
+    start: 7
+    end: 18
+
+  segmentos:
+    "01": "Básico"
+    "02": "Estándar"
+    "03": "Premium"
+    "04": "Elite"
+
+# ---------------------------------------------------------------------------
+# FASE 4: Orquestación
+# ---------------------------------------------------------------------------
+orchestration:
+  schedule_cron: "0 2 * * *"  # Diario a las 02:00 AM COT
+  timezone: "America/Bogota"
+  retries: 3
+  retry_delay_seconds: 60
+  retry_backoff_factor: 2  # Exponential backoff
+  task_timeout_minutes:
+    bronze: 30
+    silver: 45
+    gold: 60
+    quality: 15
+  alerts:
+    email_recipients:
+      - "data-engineering@finbank.com"
+    volume_anomaly_threshold_pct: 30
+
+# ---------------------------------------------------------------------------
+# FASE 5: Gobierno y Seguridad
+# ---------------------------------------------------------------------------
+governance:
+  roles:
+    - name: "data_engineer"
+      description: "Lectura/escritura en todas las capas"
+      access: ["bronze_rw", "silver_rw", "gold_rw", "logs_rw"]
+    - name: "analyst"
+      description: "Solo lectura en capa Gold"
+      access: ["gold_ro"]
+    - name: "admin"
+      description: "Control total sobre recursos"
+      access: ["all"]
+
+  sensitive_columns:
+    - table: "TB_CLIENTES_CORE"
+      columns: ["nomb_cli", "apell_cli", "num_doc", "fec_nac"]
+      classification: "PII"
+    - table: "TB_MOV_FINANCIEROS"
+      columns: ["vr_mov", "id_dispositivo"]
+      classification: "Financiero"
+    - table: "TB_OBLIGACIONES"
+      columns: ["sdo_capital", "vr_desembolsado", "vr_aprobado"]
+      classification: "Financiero"
+
+  audit:
+    enabled: true
+    log_access: true
+    retention_days: 90

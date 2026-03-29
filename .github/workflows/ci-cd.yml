@@ -1,0 +1,165 @@
+# =============================================================================
+# CI/CD Pipeline — FinBank Data Pipeline
+# Validates code, runs linting, and deploys Terraform changes
+# =============================================================================
+
+name: FinBank Pipeline CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  TERRAFORM_VERSION: "1.6.0"
+  PYTHON_VERSION: "3.11"
+  TF_WORKING_DIR: "./infra"
+
+jobs:
+  # -----------------------------------------------------------------------
+  # JOB 1: Validate Python code
+  # -----------------------------------------------------------------------
+  python-validate:
+    name: "Python Lint & Test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install flake8 pytest pandas numpy pyyaml pyarrow
+
+      - name: Lint with flake8
+        run: |
+          flake8 data-generation/ --max-line-length=120 --ignore=E501,W503
+          flake8 pipelines/ --max-line-length=120 --ignore=E501,W503,F821
+
+      - name: Run data generation (smoke test)
+        run: |
+          cd data-generation
+          python generate_data.py \
+            --config ../config/pipeline_config.yaml \
+            --output ./test_output
+          # Verify all 6 CSV files exist
+          for table in TB_CLIENTES_CORE TB_PRODUCTOS_CAT TB_SUCURSALES_RED \
+                       TB_MOV_FINANCIEROS TB_OBLIGACIONES TB_COMISIONES_LOG; do
+            test -f ./test_output/csv/${table}.csv || exit 1
+          done
+          echo "✅ All 6 tables generated successfully"
+
+      - name: Verify data quality
+        run: |
+          cd data-generation
+          python -c "
+          import pandas as pd
+          import os
+          tables = {
+              'TB_CLIENTES_CORE': 10000,
+              'TB_PRODUCTOS_CAT': 50,
+              'TB_SUCURSALES_RED': 200,
+              'TB_MOV_FINANCIEROS': 500000,  # +500 anomalies
+              'TB_OBLIGACIONES': 30000,
+              'TB_COMISIONES_LOG': 80000,
+          }
+          for name, min_count in tables.items():
+              df = pd.read_csv(f'./test_output/csv/{name}.csv', low_memory=False)
+              assert len(df) >= min_count, f'{name}: {len(df)} < {min_count}'
+              print(f'  ✅ {name}: {len(df):,} rows (min: {min_count:,})')
+          print('All volume checks passed')
+          "
+
+  # -----------------------------------------------------------------------
+  # JOB 2: Terraform Validate
+  # -----------------------------------------------------------------------
+  terraform-validate:
+    name: "Terraform Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init (no backend)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+  # -----------------------------------------------------------------------
+  # JOB 3: Security Scan (credentials check)
+  # -----------------------------------------------------------------------
+  security-scan:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for secrets in code
+        run: |
+          echo "Scanning for potential secrets..."
+          # Check for common secret patterns
+          if grep -rn "password\s*=" --include="*.tf" --include="*.py" --include="*.yaml" \
+             --exclude-dir=".git" . | grep -v "variable\|sensitive\|dbutils.secrets\|os.environ\|TF_VAR\|#"; then
+            echo "❌ Potential hardcoded secrets found!"
+            exit 1
+          fi
+          # Check for terraform state files
+          if find . -name "*.tfstate" -o -name "*.tfstate.backup" | head -1 | grep -q .; then
+            echo "❌ Terraform state file found in repository!"
+            exit 1
+          fi
+          echo "✅ No secrets or state files detected"
+
+  # -----------------------------------------------------------------------
+  # JOB 4: Deploy (only on main branch push)
+  # -----------------------------------------------------------------------
+  deploy-infra:
+    name: "Deploy Infrastructure"
+    needs: [python-validate, terraform-validate, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var-file="environments/dev.tfvars" \
+            -var="sql_admin_password=${{ secrets.SQL_ADMIN_PASSWORD }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan

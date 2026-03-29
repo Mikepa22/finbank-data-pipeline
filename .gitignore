@@ -1,0 +1,52 @@
+# =============================================================================
+# .gitignore — FinBank Pipeline
+# =============================================================================
+
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# --- Secretos y credenciales (CRÍTICO) ---
+*.pem
+*.key
+*.env
+.env.*
+secrets.yaml
+credentials.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# --- Datos generados (no versionar datos grandes) ---
+data-generation/output/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Logs ---
+*.log
+
+# --- Databricks ---
+.databricks/
