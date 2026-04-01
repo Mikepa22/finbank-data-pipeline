@@ -3,7 +3,7 @@
 # Uso: terraform apply -var-file="environments/dev.tfvars"
 # =============================================================================
 environment          = "dev"
-location             = "eastus2"
+location             = "westus2"
 storage_replication  = "LRS"
 databricks_sku       = "standard"
 sql_sku              = "Basic"
@@ -16,5 +16,5 @@ tags = {
   managed_by  = "terraform"
 }
 
-alert_email_recipients = ["dev-alerts@finbank.com"]
+alert_email_recipients = ["Mikedataeng@outlook.com"]
 # sql_admin_password se pasa via variable de entorno: TF_VAR_sql_admin_password

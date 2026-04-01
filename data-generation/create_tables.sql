@@ -117,9 +117,8 @@ CREATE INDEX IX_com_cliente ON dbo.TB_COMISIONES_LOG (id_cli);
 CREATE INDEX IX_com_fecha ON dbo.TB_COMISIONES_LOG (fec_cobro);
 CREATE INDEX IX_com_estado ON dbo.TB_COMISIONES_LOG (estado_cobro);
 
--- =============================================================================
 -- Verificación
--- =============================================================================
+
 SELECT 
     t.name AS tabla,
     p.rows AS registros

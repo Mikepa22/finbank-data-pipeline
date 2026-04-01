@@ -38,13 +38,13 @@ output "log_analytics_workspace_id" {
   value = azurerm_log_analytics_workspace.main.id
 }
 
-output "sql_server_fqdn" {
-  value = azurerm_mssql_server.source.fully_qualified_domain_name
-}
-
-output "sql_database_name" {
-  value = azurerm_mssql_database.transactional.name
-}
+#output "sql_server_fqdn" {
+#  value = azurerm_mssql_server.source.fully_qualified_domain_name
+#}
+#
+#output "sql_database_name" {
+#  value = azurerm_mssql_database.transactional.name
+#}
 
 output "action_group_id" {
   value = azurerm_monitor_action_group.pipeline_alerts.id

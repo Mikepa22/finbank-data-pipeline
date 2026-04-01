@@ -21,12 +21,13 @@ terraform {
   }
 
   # Backend remoto — Estado almacenado en Azure Storage (NUNCA en el repo)
-  backend "azurerm" {
-    resource_group_name  = "rg-terraform-state"
-    storage_account_name = "stterraformfinbank"
-    container_name       = "tfstate"
-    key                  = "finbank-pipeline.terraform.tfstate"
-  }
+  #backend "azurerm" {
+  #  resource_group_name  = "rg-terraform-state"
+  #  storage_account_name = "stterraformfinbank"
+  #  container_name       = "tfstate"
+  #  key                  = "finbank-pipeline.terraform.tfstate"
+  #}
+  backend "azurerm" {}
 }
 
 provider "azurerm" {
@@ -198,32 +199,32 @@ resource "azurerm_monitor_action_group" "pipeline_alerts" {
 # =============================================================================
 # AZURE SQL DATABASE — Fuente Transaccional
 # =============================================================================
-resource "azurerm_mssql_server" "source" {
-  name                         = "${var.sql_server_name}-${var.environment}"
-  resource_group_name          = azurerm_resource_group.main.name
-  location                     = azurerm_resource_group.main.location
-  version                      = "12.0"
-  administrator_login          = var.sql_admin_login
-  administrator_login_password = var.sql_admin_password  # Se pasa como variable sensible
+#resource "azurerm_mssql_server" "source" {
+#name                         = "${var.sql_server_name}-${var.environment}"
+#resource_group_name          = azurerm_resource_group.main.name
+#location                     = azurerm_resource_group.main.location
+#version                      = "12.0"
+#administrator_login          = var.sql_admin_login
+#administrator_login_password = var.sql_admin_password  # Se pasa como variable sensible
 
-  tags = var.tags
-}
+#tags = var.tags
+#}
 
-resource "azurerm_mssql_database" "transactional" {
-  name      = var.sql_database_name
-  server_id = azurerm_mssql_server.source.id
-  sku_name  = var.sql_sku
+#resource "azurerm_mssql_database" "transactional" {
+#name      = var.sql_database_name
+#server_id = azurerm_mssql_server.source.id
+#sku_name  = var.sql_sku
 
-  tags = var.tags
-}
+#tags = var.tags
+#}
 
 # Firewall: Permitir servicios Azure
-resource "azurerm_mssql_firewall_rule" "allow_azure" {
-  name             = "AllowAzureServices"
-  server_id        = azurerm_mssql_server.source.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
-}
+#resource "azurerm_mssql_firewall_rule" "allow_azure" {
+#name             = "AllowAzureServices"
+#server_id        = azurerm_mssql_server.source.id
+#start_ip_address = "0.0.0.0"
+#end_ip_address   = "0.0.0.0"
+#}
 
 # =============================================================================
 # RBAC — Roles y Accesos (Fase 5)
@@ -237,17 +238,17 @@ resource "azurerm_role_assignment" "adf_storage_contributor" {
 }
 
 # Rol: Data Engineer (lectura/escritura en todas las capas)
-resource "azurerm_role_assignment" "data_engineer_storage" {
-  for_each             = toset(var.data_engineer_principal_ids)
-  scope                = azurerm_storage_account.datalake.id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = each.value
-}
+#resource "azurerm_role_assignment" "data_engineer_storage" {
+# for_each             = toset(var.data_engineer_principal_ids)
+#  scope                = azurerm_storage_account.datalake.id
+#  role_definition_name = "Storage Blob Data Contributor"
+#  principal_id         = each.value
+#}
 
 # Rol: Analyst (solo lectura en Gold)
-resource "azurerm_role_assignment" "analyst_gold_reader" {
-  for_each             = toset(var.analyst_principal_ids)
-  scope                = azurerm_storage_container.containers["gold"].resource_manager_id
-  role_definition_name = "Storage Blob Data Reader"
-  principal_id         = each.value
-}
+#resource "azurerm_role_assignment" "analyst_gold_reader" {
+#  for_each             = toset(var.analyst_principal_ids)
+#  scope                = azurerm_storage_container.containers["gold"].resource_manager_id
+#  role_definition_name = "Storage Blob Data Reader"
+#  principal_id         = each.value
+#}
