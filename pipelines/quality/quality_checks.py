@@ -6,8 +6,25 @@
 
 # COMMAND ----------
 
+# --- Configurar acceso a ADLS Gen2 ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
+
+# Obtener la key del Storage Account desde Key Vault
+storage_key = dbutils.secrets.get(scope="finbank-secrets", key="storage-account-key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    storage_key
+)
+print("✅ Acceso a ADLS Gen2 configurado")
+
+# COMMAND ----------
+
 from datetime import datetime
 from pyspark.sql import functions as F
+
+dbutils.widgets.text("storage_account", "stfinbankdatalakedev")
+dbutils.widgets.text("batch_id", "bf48b24e")
 
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
 GOLD_PATH = f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net"
