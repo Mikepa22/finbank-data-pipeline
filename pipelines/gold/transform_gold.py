@@ -20,6 +20,23 @@ from pyspark.sql.types import *
 
 # COMMAND ----------
 
+# --- Configurar acceso a ADLS Gen2 ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
+
+# Obtener la key del Storage Account desde Key Vault
+storage_key = dbutils.secrets.get(scope="finbank-secrets", key="storage-account-key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    storage_key
+)
+print("✅ Acceso a ADLS Gen2 configurado")
+
+# COMMAND ----------
+
+dbutils.widgets.text("storage_account", "stfinbankdatalakedev")
+dbutils.widgets.text("batch_id", "bf48b24e")
+
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
 BATCH_ID = dbutils.widgets.get("batch_id")
 
@@ -265,8 +282,9 @@ def build_fact_rentabilidad():
     df_mov = read_silver("silver_movimientos")
     df_com = read_silver("silver_comisiones")
 
-    # Intereses: filtrar movimientos tipo COMISION e intereses de los últimos 12 meses
-    cutoff_12m = F.add_months(F.current_date(), -12)
+    # # Usar la fecha máxima de los datos en vez de current_date
+    max_date_mov = df_mov.agg(F.max("fec_mov")).collect()[0][0]
+    cutoff_12m = F.lit(max_date_mov) - F.expr("INTERVAL 12 MONTHS")
 
     # Ingresos por movimientos (aprox.: tipo COMISION como proxy de intereses generados)
     mov_agg = (

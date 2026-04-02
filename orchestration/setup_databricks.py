@@ -61,18 +61,36 @@ print("ℹ️ Configuración de acceso a ADLS Gen2 — usar Managed Identity en 
 
 # COMMAND ----------
 
-# --- 3. Crear base de datos en metastore ---
-STORAGE_ACCOUNT = "stfinbankdatalakedev"  # Ajustar según entorno
+# --- Configurar acceso a ADLS Gen2 ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
 
-databases = {
-    "finbank_bronze": f"abfss://bronze@{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    "finbank_silver": f"abfss://silver@{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    "finbank_gold": f"abfss://gold@{STORAGE_ACCOUNT}.dfs.core.windows.net",
-}
+# Obtener la key del Storage Account desde Key Vault
+storage_key = dbutils.secrets.get(scope="finbank-secrets", key="storage-account-key")
 
-for db_name, location in databases.items():
-    spark.sql(f"CREATE DATABASE IF NOT EXISTS {db_name} LOCATION '{location}'")
-    print(f"✅ Database '{db_name}' → {location}")
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    storage_key
+)
+print("✅ Acceso a ADLS Gen2 configurado")
+
+# COMMAND ----------
+
+# --- 3. Verificar acceso a los contenedores del Data Lake ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
+
+containers = ["bronze", "silver", "gold", "errors", "logs"]
+for c in containers:
+    path = f"abfss://{c}@{STORAGE_ACCOUNT}.dfs.core.windows.net/"
+    try:
+        dbutils.fs.ls(path)
+        print(f"  ✅ Container '{c}' accesible")
+    except Exception as e:
+        if "FilesystemNotFound" in str(e):
+            print(f"  ✅ Container '{c}' existe (vacío)")
+        else:
+            print(f"  ❌ Container '{c}' error: {e}")
+
+print("\n✅ Acceso al Data Lake verificado — listo para ejecutar el pipeline")
 
 # COMMAND ----------
 

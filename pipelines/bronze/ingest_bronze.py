@@ -23,14 +23,28 @@ from delta.tables import DeltaTable
 
 # COMMAND ----------
 
+# --- Configurar acceso a ADLS Gen2 ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
+
+# Obtener la key del Storage Account desde Key Vault
+storage_key = dbutils.secrets.get(scope="finbank-secrets", key="storage-account-key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    storage_key
+)
+print("✅ Acceso a ADLS Gen2 configurado")
+
+# COMMAND ----------
+
 # --- Configuración ---
 # Estos valores se inyectan desde el orquestador (ADF/Databricks Workflow)
 # o se leen del Key Vault / widgets de Databricks
 
-# dbutils.widgets.text("storage_account", "stfinbankdatalakedev")
-# dbutils.widgets.text("sql_server", "sql-finbank-source-dev.database.windows.net")
-# dbutils.widgets.text("sql_database", "finbank_transactional")
-# dbutils.widgets.text("execution_mode", "full")  # full | incremental
+dbutils.widgets.text("storage_account", "stfinbankdatalakedev")
+dbutils.widgets.text("sql_server", "sql-finbank-source-dev.database.windows.net")
+dbutils.widgets.text("sql_database", "finbank_transactional")
+dbutils.widgets.text("execution_mode", "full")  # full | incremental
 
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
 SQL_SERVER = dbutils.widgets.get("sql_server")
@@ -205,20 +219,29 @@ def ingest_table(table_name: str, config: dict) -> dict:
 
 # COMMAND ----------
 
-def write_ingestion_log(all_metrics: list):
-    """Registra el log de ejecución de la ingesta Bronze."""
-    from pyspark.sql import Row
+# --- Guardar log de ingesta ---
+from pyspark.sql.types import StructType, StructField, StringType, LongType, DoubleType
 
-    log_rows = [Row(**m) for m in all_metrics]
-    df_log = spark.createDataFrame(log_rows)
+schema = StructType([
+    StructField("table", StringType()),
+    StructField("row_count", LongType()),
+    StructField("duration_seconds", DoubleType()),
+    StructField("status", StringType()),
+    StructField("batch_id", StringType()),
+])
 
-    (
-        df_log.write
-        .format("delta")
-        .mode("append")
-        .save(f"{LOGS_PATH}/bronze_ingestion_log")
-    )
-    print(f"\n📋 Log de ingesta guardado ({len(all_metrics)} tablas)")
+# Normalizar métricas
+log_data = [(m["table"], int(m.get("row_count", 0)), float(m.get("duration_seconds", 0)), 
+             m.get("status", "UNKNOWN"), m.get("batch_id", "")) for m in all_metrics]
+
+df_log = spark.createDataFrame(log_data, schema)
+df_log.write.format("delta").mode("append").save(f"{LOGS_PATH}/bronze_ingestion_log")
+
+print(f"\nLog guardado ({len(all_metrics)} tablas)")
+
+# Resumen
+total_rows = sum(m.get("row_count", 0) for m in all_metrics)
+print(f"Bronze completado: {total_rows:,} registros en {len(all_metrics)} tablas")
 
 # COMMAND ----------
 
@@ -236,7 +259,7 @@ for table_name, config in SOURCE_TABLES.items():
     all_metrics.append(metrics)
 
 # Escribir log
-write_ingestion_log(all_metrics)
+#write_ingestion_log(all_metrics)
 
 # Validar resultados
 failed = [m for m in all_metrics if m["status"] == "FAILED"]

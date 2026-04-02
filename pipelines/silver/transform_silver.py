@@ -25,7 +25,24 @@ from delta.tables import DeltaTable
 
 # COMMAND ----------
 
+# --- Configurar acceso a ADLS Gen2 ---
+STORAGE_ACCOUNT = "stfinbankdatalakedev"
+
+# Obtener la key del Storage Account desde Key Vault
+storage_key = dbutils.secrets.get(scope="finbank-secrets", key="storage-account-key")
+
+spark.conf.set(
+    f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    storage_key
+)
+print("✅ Acceso a ADLS Gen2 configurado")
+
+# COMMAND ----------
+
 # --- Configuración ---
+dbutils.widgets.text("storage_account", "stfinbankdatalakedev")
+dbutils.widgets.text("batch_id", "bf48b24e")
+
 STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
 BATCH_ID = dbutils.widgets.get("batch_id")
 
@@ -69,6 +86,7 @@ def write_errors(df: DataFrame, table_name: str, error_type: str):
           .withColumn("_source_table", F.lit(table_name))
           .withColumn("_batch_id", F.lit(BATCH_ID))
           .write.format("delta").mode("append")
+          .option("mergeSchema", "true")
           .save(f"{ERRORS_PATH}/silver_rejected")
     )
 
@@ -219,7 +237,8 @@ def process_movimientos(df_clientes):
     qr.add("TB_MOV_FINANCIEROS", "bronze_row_count", original_count)
 
     # Eliminar duplicados exactos (Anomalía 1: esperamos ~500)
-    df_dedup = df.dropDuplicates(subset=[c for c in df.columns if not c.startswith("_")])
+    business_cols = [c for c in df.columns if not c.startswith("_") and c != "id_mov"]
+    df_dedup = df.dropDuplicates(subset=business_cols)
     dup_count = original_count - df_dedup.count()
     qr.add("TB_MOV_FINANCIEROS", "duplicates_removed", dup_count)
     print(f"  ⚠ {dup_count} duplicados exactos eliminados")
@@ -406,5 +425,5 @@ df_comisiones = process_comisiones(df_clientes)
 qr.save()
 
 print("\n" + "=" * 60)
-print("✅ SILVER PROCESSING COMPLETADO")
+print("SILVER PROCESSING COMPLETADO")
 print("=" * 60)
